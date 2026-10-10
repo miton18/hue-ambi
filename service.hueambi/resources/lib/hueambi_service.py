@@ -84,7 +84,7 @@ class Service(xbmc.Monitor):
         self.next_start = time.time() + delay
 
 
-if __name__ == '__main__':
+def run():
     svc = Service()
     a = addon()
     import_old_credentials(a)
