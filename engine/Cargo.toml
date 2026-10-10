@@ -1,0 +1,21 @@
+[package]
+name = "hue-ambi"
+version = "0.1.0"
+edition = "2021"
+description = "Philips Hue ambilight for Raspberry Pi 5 / LibreELEC: DRM video plane capture + Hue Entertainment streaming"
+license = "MIT"
+repository = "https://github.com/miton18/hue-ambi"
+readme = "../README.md"
+publish = false
+
+[dependencies]
+libc = "0.2"
+openssl = { version = "0.10", features = ["vendored"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

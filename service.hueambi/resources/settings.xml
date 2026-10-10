@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<settings>
+  <category label="30000">
+    <setting id="enabled" type="bool" label="30001" default="true"/>
+    <setting id="bridge" type="ipaddress" label="30002" default=""/>
+    <setting id="paired" type="text" label="30003" default="" enable="false"/>
+    <setting type="action" label="30004" action="RunScript(special://home/addons/service.hueambi/actions.py,pair)" option="close"/>
+    <setting id="area_name" type="text" label="30005" default="" enable="false"/>
+    <setting type="action" label="30006" action="RunScript(special://home/addons/service.hueambi/actions.py,area)" option="close"/>
+    <setting id="key" type="text" label="key" default="" visible="false"/>
+    <setting id="clientkey" type="text" label="clientkey" default="" visible="false"/>
+    <setting id="area" type="text" label="area" default="" visible="false"/>
+  </category>
+  <category label="30010">
+    <setting id="fps" type="slider" label="30011" default="50" range="10,5,60" option="int"/>
+    <setting id="smoothing" type="slider" label="30012" default="0.35" range="0.05,0.05,1" option="float"/>
+    <setting id="saturation" type="slider" label="30013" default="1.25" range="0.5,0.05,2" option="float"/>
+    <setting id="gain" type="slider" label="30014" default="1.0" range="0.2,0.05,2" option="float"/>
+  </category>
+</settings>

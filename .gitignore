@@ -1,0 +1,6 @@
+/engine/target/
+/service.hueambi/bin/hue-ambi
+/dist/
+__pycache__/
+*.pyc
+CLAUDE.local.md

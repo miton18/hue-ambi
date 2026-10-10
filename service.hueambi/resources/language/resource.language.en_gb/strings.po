@@ -1,0 +1,122 @@
+# Kodi Media Center language file
+# Addon Name: Hue Ambi
+# Addon id: service.hueambi
+# Addon Provider: Rémi Collignon-Ducret
+msgid ""
+msgstr ""
+"Project-Id-Version: service.hueambi\n"
+"Report-Msgid-Bugs-To: https://github.com/miton18/hue-ambi/issues\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Language: en\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+msgctxt "#30000"
+msgid "Hue bridge"
+msgstr ""
+
+msgctxt "#30001"
+msgid "Ambilight enabled"
+msgstr ""
+
+msgctxt "#30002"
+msgid "Bridge IP address"
+msgstr ""
+
+msgctxt "#30003"
+msgid "Pairing"
+msgstr ""
+
+msgctxt "#30004"
+msgid "Pair with the bridge (press its button first)"
+msgstr ""
+
+msgctxt "#30005"
+msgid "Entertainment area"
+msgstr ""
+
+msgctxt "#30006"
+msgid "Choose the entertainment area"
+msgstr ""
+
+msgctxt "#30010"
+msgid "Rendering"
+msgstr ""
+
+msgctxt "#30011"
+msgid "Frames per second"
+msgstr ""
+
+msgctxt "#30012"
+msgid "Responsiveness (1 = instant)"
+msgstr ""
+
+msgctxt "#30013"
+msgid "Saturation"
+msgstr ""
+
+msgctxt "#30014"
+msgid "Brightness"
+msgstr ""
+
+msgctxt "#30100"
+msgid "Hue bridge IP address"
+msgstr ""
+
+msgctxt "#30101"
+msgid "Press the round button on the Hue bridge..."
+msgstr ""
+
+msgctxt "#30102"
+msgid "Press the round button on the Hue bridge ([B]%d s[/B])"
+msgstr ""
+
+msgctxt "#30103"
+msgid "Pairing failed.[CR]%s"
+msgstr ""
+
+msgctxt "#30104"
+msgid "paired on %s"
+msgstr ""
+
+msgctxt "#30105"
+msgid "Could not list the entertainment areas.[CR]%s"
+msgstr ""
+
+msgctxt "#30106"
+msgid "%s  (%s, %s lights)"
+msgstr ""
+
+msgctxt "#30107"
+msgid "not paired"
+msgstr ""
+
+msgctxt "#30108"
+msgid "key imported from script.service.hue, pairing required for streaming"
+msgstr ""
+
+msgctxt "#30109"
+msgid "none"
+msgstr ""
+
+msgctxt "#30110"
+msgid "screen"
+msgstr ""
+
+msgctxt "#30111"
+msgid "monitor"
+msgstr ""
+
+msgctxt "#30112"
+msgid "music"
+msgstr ""
+
+msgctxt "#30113"
+msgid "3D space"
+msgstr ""
+
+msgctxt "#30114"
+msgid "other"
+msgstr ""
+
