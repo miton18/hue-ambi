@@ -5,6 +5,10 @@
 //!
 //! Kodi cree un framebuffer par image affichee et le noyau recycle aussitot les numeros :
 //! les tampons mappes sont donc indexes par l'inode de leur dma-buf, pas par numero de fb.
+//!
+//! Le numero du peripherique d'affichage depend de l'ordre de sondage des pilotes (sur Pi 5,
+//! card0 est le GPU de rendu v3d et card1 le controleur d'affichage vc4) : on ouvre tous les
+//! /dev/dri/cardN qui exposent des plans et on cherche la video sur chacun.
 
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
@@ -12,8 +16,8 @@ use std::io;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::os::unix::fs::OpenOptionsExt;
 
-const CARD: &str = "/dev/dri/card1";
-const STATE: &str = "/sys/kernel/debug/dri/1/state";
+const DRI: &str = "/dev/dri";
+const DEBUG_DRI: &str = "/sys/kernel/debug/dri";
 
 /// Grille d'echantillonnage par zone.
 const GX: usize = 12;
@@ -85,6 +89,21 @@ struct DmaBufSync {
     flags: u64,
 }
 
+#[repr(C)]
+#[derive(Default)]
+struct Version {
+    major: i32,
+    minor: i32,
+    patch: i32,
+    name_len: usize,
+    name: usize,
+    date_len: usize,
+    date: usize,
+    desc_len: usize,
+    desc: usize,
+}
+
+const VERSION: u64 = ioc(RW, b'd', 0x00, std::mem::size_of::<Version>());
 const GETFB2: u64 = ioc(RW, b'd', 0xCE, std::mem::size_of::<FbCmd2>());
 const PRIME_H2FD: u64 = ioc(RW, b'd', 0x2D, std::mem::size_of::<PrimeHandle>());
 const GEM_CLOSE: u64 = ioc(W, b'd', 0x09, std::mem::size_of::<GemClose>());
@@ -116,7 +135,7 @@ fn is_yuv(f: u32) -> bool {
 /// Coherence entre le cache du CPU et la memoire ecrite par le decodeur.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Sync {
-    /// invalide uniquement les lignes de cache lues (`dc civac`) : quelques microsecondes
+    /// invalide uniquement les lignes de cache lues (`dc civac`), une seule barriere par image
     Dc,
     /// DMA_BUF_IOCTL_SYNC : synchronise tout le tampon (methode officielle, plus lente)
     DmaBuf,
@@ -136,14 +155,34 @@ impl Sync {
 }
 
 /// Nettoie et invalide la ligne de cache contenant `p` (autorise en espace utilisateur sur arm64).
+/// Sans barriere : l'appelant en place une seule apres toute la serie, avec `dsb()`.
 #[inline(always)]
-fn inval(p: *const u8) {
+fn dc_civac(p: *const u8) {
     #[cfg(target_arch = "aarch64")]
     unsafe {
-        std::arch::asm!("dc civac, {0}", "dsb ish", in(reg) p, options(nostack, preserves_flags));
+        std::arch::asm!("dc civac, {0}", in(reg) p, options(nostack, preserves_flags));
     }
     #[cfg(not(target_arch = "aarch64"))]
     let _ = p;
+}
+
+/// Attend la fin des operations de cache lancees avant de lire la memoire.
+#[inline(always)]
+fn dsb() {
+    #[cfg(target_arch = "aarch64")]
+    unsafe {
+        std::arch::asm!("dsb ish", options(nostack, preserves_flags));
+    }
+}
+
+/// Nom du pilote DRM ("vc4", "v3d"...), pour le journal.
+fn driver_name(fd: RawFd) -> String {
+    let mut buf = [0u8; 32];
+    let mut v = Version { name_len: buf.len(), name: buf.as_mut_ptr() as usize, ..Default::default() };
+    if ioctl(fd, VERSION, &mut v).is_err() {
+        return "?".into();
+    }
+    String::from_utf8_lossy(&buf[..v.name_len.min(buf.len())]).into_owned()
 }
 
 /// Zone de l'image a moyenner, en coordonnees normalisees 0..1.
@@ -172,8 +211,8 @@ fn parse_src(s: &str) -> Option<(u32, u32, u32, u32)> {
 
 /// Rectangle source et HDR du plan, lus dans debugfs. debugfs verrouille tout l'affichage
 /// pendant la lecture : on ne le consulte qu'au demarrage d'un flux ou a un changement de format.
-fn plane_meta(id: u32) -> Option<((u32, u32, u32, u32), bool)> {
-    let st = fs::read_to_string(STATE).ok()?;
+fn plane_meta(minor: u32, id: u32) -> Option<((u32, u32, u32, u32), bool)> {
+    let st = fs::read_to_string(format!("{DEBUG_DRI}/{minor}/state")).ok()?;
     let chunk = st
         .split("plane[")
         .skip(1)
@@ -184,7 +223,7 @@ fn plane_meta(id: u32) -> Option<((u32, u32, u32, u32), bool)> {
 }
 
 fn ensure_debugfs() {
-    if fs::metadata(STATE).is_ok() {
+    if fs::metadata(DEBUG_DRI).is_ok() {
         return;
     }
     let src = b"debugfs\0";
@@ -290,13 +329,13 @@ impl Frame {
 
     /// Lit `n` octets (1, 2 ou 4, jamais a cheval sur deux lignes de cache) en petit-boutiste.
     #[inline(always)]
-    fn rd(&self, a: usize, n: usize, flush: bool) -> Option<u32> {
+    fn load(&self, a: usize, n: usize) -> Option<u32> {
         if a + n > self.len {
             return None;
         }
         let p = unsafe { self.ptr.add(a) };
-        if flush {
-            inval(p);
+        if n == 4 && a % 4 == 0 {
+            return Some(u32::from_le(unsafe { std::ptr::read_volatile(p as *const u32) }));
         }
         let mut v = 0u32;
         for i in 0..n {
@@ -305,9 +344,20 @@ impl Frame {
         Some(v)
     }
 
-    /// (Y, Cb, Cr, bits) a la position (x, y).
-    #[inline]
-    fn yuv(&self, x: usize, y: usize, fl: bool) -> Option<(u16, u16, u16, u8)> {
+    /// Invalide la ligne de cache de l'adresse `a` sans la lire (premiere passe de `grab`).
+    #[inline(always)]
+    fn flush(&self, a: usize, n: usize) -> Option<u32> {
+        if a + n <= self.len {
+            dc_civac(unsafe { self.ptr.add(a) });
+        }
+        Some(0)
+    }
+
+    /// (Y, Cb, Cr, bits) a la position (x, y). Chaque acces memoire passe par `rd(adresse, octets)` :
+    /// la meme fonction sert a invalider le cache (`flush`) puis a lire (`load`), sans dupliquer
+    /// le calcul des adresses.
+    #[inline(always)]
+    fn yuv_with(&self, x: usize, y: usize, rd: impl Fn(usize, usize) -> Option<u32>) -> Option<(u16, u16, u16, u8)> {
         let o = &self.off;
         let p = &self.pitch;
         let cs = self.cs;
@@ -317,31 +367,31 @@ impl Frame {
                 let (col, xi) = (x / 96, x % 96);
                 let k = xi / 2;
                 let s = |base: usize, row: usize, i: usize| -> Option<u16> {
-                    let v = self.rd(col * cs + base + row * 128 + (i / 3) * 4, 4, fl)?;
+                    let v = rd(col * cs + base + row * 128 + (i / 3) * 4, 4)?;
                     Some(((v >> (10 * (i % 3))) & 0x3FF) as u16)
                 };
                 Some((s(o[0], y, xi)?, s(o[1], y / 2, 2 * k)?, s(o[1], y / 2, 2 * k + 1)?, 10))
             }
             (b"NV12", true) => {
                 let (col, xi) = (x / 128, x % 128);
-                let uv = self.rd(col * cs + o[1] + (y / 2) * 128 + (xi & !1), 2, fl)?;
-                let yy = self.rd(col * cs + o[0] + y * 128 + xi, 1, fl)?;
+                let uv = rd(col * cs + o[1] + (y / 2) * 128 + (xi & !1), 2)?;
+                let yy = rd(col * cs + o[0] + y * 128 + xi, 1)?;
                 Some((yy as u16, (uv & 0xFF) as u16, (uv >> 8) as u16, 8))
             }
             (b"NV12", false) => {
-                let uv = self.rd(o[1] + (y / 2) * p[1] + (x & !1), 2, fl)?;
-                let yy = self.rd(o[0] + y * p[0] + x, 1, fl)?;
+                let uv = rd(o[1] + (y / 2) * p[1] + (x & !1), 2)?;
+                let yy = rd(o[0] + y * p[0] + x, 1)?;
                 Some((yy as u16, (uv & 0xFF) as u16, (uv >> 8) as u16, 8))
             }
             (b"YU12", false) => Some((
-                self.rd(o[0] + y * p[0] + x, 1, fl)? as u16,
-                self.rd(o[1] + (y / 2) * p[1] + x / 2, 1, fl)? as u16,
-                self.rd(o[2] + (y / 2) * p[2] + x / 2, 1, fl)? as u16,
+                rd(o[0] + y * p[0] + x, 1)? as u16,
+                rd(o[1] + (y / 2) * p[1] + x / 2, 1)? as u16,
+                rd(o[2] + (y / 2) * p[2] + x / 2, 1)? as u16,
                 8,
             )),
             (b"P010", false) => {
-                let yy = self.rd(o[0] + y * p[0] + x * 2, 2, fl)?;
-                let uv = self.rd(o[1] + (y / 2) * p[1] + (x / 2) * 4, 4, fl)?;
+                let yy = rd(o[0] + y * p[0] + x * 2, 2)?;
+                let uv = rd(o[1] + (y / 2) * p[1] + (x / 2) * 4, 4)?;
                 Some(((yy >> 6) as u16, ((uv & 0xFFFF) >> 6) as u16, (uv >> 22) as u16, 10))
             }
             _ => None,
@@ -349,14 +399,62 @@ impl Frame {
     }
 }
 
-pub struct Capture {
-    card: File,
+/// Un peripherique DRM d'affichage (KMS), c'est-a-dire qui expose des plans.
+struct Card {
+    file: File,
+    minor: u32,
+    driver: String,
     planes: Vec<u32>,
+}
+
+impl Card {
+    fn open(minor: u32) -> io::Result<Card> {
+        let path = format!("{DRI}/card{minor}");
+        let file = OpenOptions::new().read(true).write(true).custom_flags(libc::O_CLOEXEC).open(path)?;
+        let fd = file.as_raw_fd();
+        let mut cap = ClientCap { capability: UNIVERSAL_PLANES, value: 1 };
+        let _ = ioctl(fd, SET_CLIENT_CAP, &mut cap);
+        // echoue sur un GPU de rendu seul (v3d) : ce n'est pas un peripherique d'affichage
+        let mut r = GetPlaneRes::default();
+        ioctl(fd, GETPLANERES, &mut r)?;
+        let mut planes = vec![0u32; r.count_planes as usize];
+        r.plane_id_ptr = planes.as_mut_ptr() as u64;
+        ioctl(fd, GETPLANERES, &mut r)?;
+        planes.truncate(r.count_planes as usize);
+        Ok(Card { minor, driver: driver_name(fd), planes, file })
+    }
+
+    fn fd(&self) -> RawFd {
+        self.file.as_raw_fd()
+    }
+
+    fn plane_fb(&self, id: u32) -> Option<u32> {
+        let mut gp = GetPlane { plane_id: id, ..Default::default() };
+        ioctl(self.fd(), GETPLANE, &mut gp).ok()?;
+        (gp.fb_id != 0).then_some(gp.fb_id)
+    }
+}
+
+/// Tous les /dev/dri/cardN qui exposent des plans, par numero croissant.
+fn kms_cards() -> Vec<Card> {
+    let mut minors: Vec<u32> = fs::read_dir(DRI)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| e.file_name().to_str()?.strip_prefix("card")?.parse().ok())
+        .collect();
+    minors.sort_unstable();
+    minors.into_iter().filter_map(|m| Card::open(m).ok()).filter(|c| !c.planes.is_empty()).collect()
+}
+
+pub struct Capture {
+    cards: Vec<Card>,
     /// tampons mappes, par inode de dma-buf
     cache: HashMap<u64, Frame>,
-    plane: Option<u32>,
+    /// (indice dans `cards`, plan) de la video en cours
+    plane: Option<(usize, u32)>,
     meta: ((u32, u32, u32, u32), bool),
-    meta_key: (u32, u32, u32, u32),
+    meta_key: Option<(usize, u32, u32, u32, u32)>,
     tick: u64,
     pub sync: Sync,
     pub last_format: [u8; 4],
@@ -365,59 +463,55 @@ pub struct Capture {
 impl Capture {
     pub fn new() -> io::Result<Capture> {
         ensure_debugfs();
-        let card = OpenOptions::new().read(true).write(true).custom_flags(libc::O_CLOEXEC).open(CARD)?;
-        let fd = card.as_raw_fd();
-        let mut cap = ClientCap { capability: UNIVERSAL_PLANES, value: 1 };
-        let _ = ioctl(fd, SET_CLIENT_CAP, &mut cap);
-        let mut r = GetPlaneRes::default();
-        ioctl(fd, GETPLANERES, &mut r)?;
-        let mut planes = vec![0u32; r.count_planes as usize];
-        r.plane_id_ptr = planes.as_mut_ptr() as u64;
-        ioctl(fd, GETPLANERES, &mut r)?;
-        planes.truncate(r.count_planes as usize);
+        let cards = kms_cards();
+        if cards.is_empty() {
+            return Err(io::Error::new(io::ErrorKind::NotFound, "aucun peripherique d'affichage DRM (KMS) dans /dev/dri"));
+        }
         Ok(Capture {
-            card,
-            planes,
+            cards,
             cache: HashMap::new(),
             plane: None,
             meta: ((0, 0, 0, 0), false),
-            meta_key: (0, 0, 0, 0),
+            meta_key: None,
             tick: 0,
             sync: Sync::Dc,
             last_format: *b"----",
         })
     }
 
-    fn plane_fb(&self, id: u32) -> Option<u32> {
-        let mut gp = GetPlane { plane_id: id, ..Default::default() };
-        ioctl(self.card.as_raw_fd(), GETPLANE, &mut gp).ok()?;
-        (gp.fb_id != 0).then_some(gp.fb_id)
+    /// "/dev/dri/card1 (vc4, 13 plans)", pour le journal.
+    pub fn describe(&self) -> String {
+        let d: Vec<String> =
+            self.cards.iter().map(|c| format!("{DRI}/card{} ({}, {} plans)", c.minor, c.driver, c.planes.len())).collect();
+        d.join(", ")
     }
 
-    /// Premier plan dont le framebuffer est en YUV, c'est-a-dire la video.
-    fn find_video(&self) -> Option<(u32, u32)> {
-        self.planes.iter().find_map(|&id| {
-            let fb = self.plane_fb(id)?;
-            let (c, _) = export(self.card.as_raw_fd(), fb, false).ok()?;
-            is_yuv(c.pixel_format).then_some((id, fb))
+    /// Premier plan dont le framebuffer est en YUV, c'est-a-dire la video : (peripherique, plan, fb).
+    fn find_video(&self) -> Option<(usize, u32, u32)> {
+        self.cards.iter().enumerate().find_map(|(ci, card)| {
+            card.planes.iter().find_map(|&id| {
+                let fb = card.plane_fb(id)?;
+                let (c, _) = export(card.fd(), fb, false).ok()?;
+                is_yuv(c.pixel_format).then_some((ci, id, fb))
+            })
         })
     }
 
-    fn locate(&mut self) -> Option<(u32, u32)> {
-        if let Some(id) = self.plane {
-            if let Some(fb) = self.plane_fb(id) {
-                return Some((id, fb));
+    fn locate(&mut self) -> Option<(usize, u32, u32)> {
+        if let Some((ci, id)) = self.plane {
+            if let Some(fb) = self.cards[ci].plane_fb(id) {
+                return Some((ci, id, fb));
             }
             self.plane = None;
         }
-        let (id, fb) = self.find_video()?;
-        self.plane = Some(id);
-        Some((id, fb))
+        let (ci, id, fb) = self.find_video()?;
+        self.plane = Some((ci, id));
+        Some((ci, id, fb))
     }
 
     /// Detection legere (quelques ioctl, sans debugfs) pour la boucle d'attente.
     pub fn has_video(&mut self) -> bool {
-        self.plane = self.find_video().map(|(id, _)| id);
+        self.plane = self.find_video().map(|(ci, id, _)| (ci, id));
         self.plane.is_some()
     }
 
@@ -425,17 +519,17 @@ impl Capture {
     pub fn reset(&mut self) {
         self.cache.clear();
         self.plane = None;
-        self.meta_key = (0, 0, 0, 0);
+        self.meta_key = None;
     }
 
     /// Moyenne lineaire de chaque zone, ecrite dans `out`. Faux si aucune image exploitable.
     pub fn grab(&mut self, zones: &[Zone], out: &mut [[f32; 3]]) -> bool {
-        let (pid, fb) = match self.locate() {
+        let (ci, pid, fb) = match self.locate() {
             Some(v) => v,
             None => return false,
         };
         // le fb peut disparaitre entre GETPLANE et GETFB2 : image ratee, sans gravite
-        let (c, fd) = match export(self.card.as_raw_fd(), fb, true) {
+        let (c, fd) = match export(self.cards[ci].fd(), fb, true) {
             Ok((c, Some(fd))) => (c, fd),
             _ => return false,
         };
@@ -461,11 +555,11 @@ impl Capture {
         if tick % 64 == 0 {
             self.cache.retain(|_, f| tick - f.seen < 150);
         }
-        let key = (pid, c.width, c.height, c.pixel_format);
-        if key != self.meta_key {
+        let key = (ci, pid, c.width, c.height, c.pixel_format);
+        if self.meta_key != Some(key) {
             let ten_bits = c.pixel_format == fourcc(b"P030") || c.pixel_format == fourcc(b"P010");
-            self.meta = plane_meta(pid).unwrap_or(((0, 0, 0, 0), ten_bits));
-            self.meta_key = key;
+            self.meta = plane_meta(self.cards[ci].minor, pid).unwrap_or(((0, 0, 0, 0), ten_bits));
+            self.meta_key = Some(key);
         }
         let ((sx, sy, mut sw, mut sh), hdr) = self.meta;
         let sync = self.sync;
@@ -481,21 +575,36 @@ impl Capture {
         }
         let maxx = c.width.saturating_sub(1) as usize;
         let maxy = c.height.saturating_sub(1) as usize;
-        let fl = sync == Sync::Dc;
-        if sync == Sync::DmaBuf {
-            frame.sync(SYNC_START_READ);
+        // position dans le framebuffer du point (i, j) de la grille d'une zone
+        let pos = |z: &Zone, i: usize, j: usize| -> (usize, usize) {
+            let fx = z.x0 + (z.x1 - z.x0) * (i as f32 + 0.5) / GX as f32;
+            let fy = z.y0 + (z.y1 - z.y0) * (j as f32 + 0.5) / GY as f32;
+            (((sx as f32 + fx * sw as f32) as usize).min(maxx), ((sy as f32 + fy * sh as f32) as usize).min(maxy))
+        };
+        match sync {
+            Sync::DmaBuf => frame.sync(SYNC_START_READ),
+            // premiere passe : invalider toutes les lignes qui vont etre lues, puis une seule barriere
+            Sync::Dc => {
+                for z in zones {
+                    for j in 0..GY {
+                        for i in 0..GX {
+                            let (x, y) = pos(z, i, j);
+                            let _ = frame.yuv_with(x, y, |a, n| frame.flush(a, n));
+                        }
+                    }
+                }
+                dsb();
+            }
+            Sync::None => {}
         }
         let mut ok = true;
         for (z, o) in zones.iter().zip(out.iter_mut()) {
             let mut acc = [0f32; 3];
             let mut n = 0u32;
             for j in 0..GY {
-                let fy = z.y0 + (z.y1 - z.y0) * (j as f32 + 0.5) / GY as f32;
-                let y = ((sy as f32 + fy * sh as f32) as usize).min(maxy);
                 for i in 0..GX {
-                    let fx = z.x0 + (z.x1 - z.x0) * (i as f32 + 0.5) / GX as f32;
-                    let x = ((sx as f32 + fx * sw as f32) as usize).min(maxx);
-                    if let Some((yy, cb, cr, bits)) = frame.yuv(x, y, fl) {
+                    let (x, y) = pos(z, i, j);
+                    if let Some((yy, cb, cr, bits)) = frame.yuv_with(x, y, |a, n| frame.load(a, n)) {
                         let c = crate::color::to_linear(yy, cb, cr, bits, hdr);
                         acc[0] += c[0];
                         acc[1] += c[1];
@@ -534,5 +643,7 @@ mod tests {
         assert_eq!(Sync::parse("dc"), Some(Sync::Dc));
         assert_eq!(GETFB2, 0xC068_64CE);
         assert_eq!(GETPLANE, 0xC020_64B6);
+        #[cfg(target_pointer_width = "64")]
+        assert_eq!(VERSION, 0xC040_6400);
     }
 }

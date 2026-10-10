@@ -1,6 +1,6 @@
 [package]
 name = "hue-ambi"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Philips Hue ambilight for Raspberry Pi 5 / LibreELEC: DRM video plane capture + Hue Entertainment streaming"
 license = "MIT"
@@ -8,9 +8,15 @@ repository = "https://github.com/miton18/hue-ambi"
 readme = "../README.md"
 publish = false
 
+[features]
+# OpenSSL compile et lie statiquement : binaire autonome pour le zip d'installation.
+# Les distributions qui fournissent OpenSSL (LibreELEC) construisent avec --no-default-features.
+default = ["vendored-openssl"]
+vendored-openssl = ["openssl/vendored"]
+
 [dependencies]
 libc = "0.2"
-openssl = { version = "0.10", features = ["vendored"] }
+openssl = "0.10"
 serde_json = "1"
 
 [profile.release]

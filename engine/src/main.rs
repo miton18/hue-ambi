@@ -109,6 +109,7 @@ fn run() -> io::Result<()> {
     eprintln!("hue-ambi : zone {} ({} canaux), {} img/s", c.area, chans.len(), c.fps);
     let mut cap = drm::Capture::new()?;
     cap.sync = c.sync;
+    eprintln!("hue-ambi : affichage {}, synchro cache {:?}", cap.describe(), c.sync);
     let period = Duration::from_secs_f32(1.0 / c.fps);
     let mut lin = vec![[0f32; 3]; zones.len()];
     let mut smooth = vec![[0f32; 3]; zones.len()];
@@ -140,10 +141,14 @@ fn run() -> io::Result<()> {
         let mut first = true;
         let mut misses = 0u32;
         let mut next = Instant::now();
-        let (mut frames, mut busy, mut t_rep) = (0u64, Duration::ZERO, Instant::now());
+        let (mut frames, mut t_rep) = (0u64, Instant::now());
+        let (mut t_grab, mut t_send) = (Duration::ZERO, Duration::ZERO);
         while !STOP.load(Ordering::SeqCst) {
             let t0 = Instant::now();
-            if cap.grab(&zones, &mut lin) {
+            let got = cap.grab(&zones, &mut lin);
+            let t1 = Instant::now();
+            t_grab += t1 - t0;
+            if got {
                 misses = 0;
                 let a = if first { 1.0 } else { c.smoothing };
                 first = false;
@@ -165,17 +170,19 @@ fn run() -> io::Result<()> {
                 eprintln!("hue-ambi : envoi : {e}");
                 break;
             }
-            busy += t0.elapsed();
+            t_send += t1.elapsed();
             frames += 1;
             if t_rep.elapsed() >= Duration::from_secs(60) {
                 let el = t_rep.elapsed().as_secs_f32();
+                let ms = |d: Duration| d.as_secs_f32() * 1000.0 / frames.max(1) as f32;
                 eprintln!(
-                    "hue-ambi : {:.1} img/s, {:.2} ms de calcul par image",
+                    "hue-ambi : {:.1} img/s, par image {:.2} ms de capture + {:.2} ms de calcul et envoi",
                     frames as f32 / el,
-                    busy.as_secs_f32() * 1000.0 / frames.max(1) as f32
+                    ms(t_grab),
+                    ms(t_send)
                 );
                 frames = 0;
-                busy = Duration::ZERO;
+                (t_grab, t_send) = (Duration::ZERO, Duration::ZERO);
                 t_rep = Instant::now();
             }
             next += period;
@@ -249,6 +256,7 @@ fn cmd_test() -> io::Result<()> {
     let zones = zones_for(&chans);
     let tuning = color::Tuning { gain: 1.0, saturation: 1.25, gamma: 2.2 };
     let mut cap = drm::Capture::new()?;
+    println!("affichage     : {}", cap.describe());
     let mut lin = vec![[0f32; 3]; zones.len()];
     if !cap.grab(&zones, &mut lin) {
         for (ch, z) in chans.iter().zip(&zones) {
