@@ -31,11 +31,13 @@ Early, version 0.1.0, in use on one setup (Pi 5, LibreELEC 12.2 / Kodi 21.3, Hue
 | Rust engine colour maths, HueStream packets | unit tests (`cargo test`) |
 | Kodi add-on install, pairing, area choice, supervision | on the setup above |
 
-**Known issue:** the engine currently spends 7–11 ms of CPU per update (5 lights), far above the intended sub-millisecond budget. The likely culprit is per-read cache maintenance; see [cache coherency](docs/architecture.md#cache-coherency). Feedback and measurements from other setups are welcome.
+**Known issue:** version 0.1.0 spent 7–11 ms of CPU per update (5 lights), far above the intended sub-millisecond budget. Version 0.2.0 batches the cache maintenance, which is the likely culprit, and logs capture and send times separately. The new figures are not measured yet; see [cache coherency](docs/architecture.md#cache-coherency). Feedback and measurements from other setups are welcome.
+
+**LibreELEC add-on repository:** a package recipe is ready in [`libreelec/`](libreelec/), to be submitted once the CPU cost is under control.
 
 ## Requirements
 
-- Raspberry Pi 5 running LibreELEC 12.x (Kodi 21). Other boards are untested (the engine opens `/dev/dri/card1`).
+- Raspberry Pi 5 running LibreELEC 12.x (Kodi 21). Other boards are untested: the engine finds the display device by itself, but only the Pi 5 pixel formats and timings have been checked.
 - Kodi video render method **Direct To Plane**: *Settings → Player → Videos → PRIME render method*.
 - A Philips Hue bridge with the v2 API (square bridge or Bridge Pro) and an **entertainment area** set up in the Hue app, with the lights placed around the TV.
 
@@ -66,6 +68,8 @@ The engine is a static `aarch64-unknown-linux-musl` binary with OpenSSL vendored
 ```
 
 It runs `cargo test` and `cargo build --release` in a `rust:1-alpine` container, copies the binary into `service.hueambi/bin/` and writes `dist/service.hueambi-<version>.zip`. On an x86 machine Docker needs arm64 emulation (Docker Desktop has it; on Linux install `qemu-user-static`). It is much faster on an arm64 host such as another Pi.
+
+By default OpenSSL is compiled into the binary (cargo feature `vendored-openssl`), so the zip runs anywhere. A distribution that ships OpenSSL 3 can build with `cargo build --release --no-default-features` and link it dynamically, as the [LibreELEC recipe](libreelec/) does.
 
 ## Command line
 
