@@ -9,7 +9,7 @@ use std::thread;
 use std::time::Duration;
 
 fn err<E: Display>(e: E) -> io::Error {
-    io::Error::new(io::ErrorKind::Other, e.to_string())
+    io::Error::other(e.to_string())
 }
 
 /// Requete HTTPS minimale vers le pont. Certificat auto-signe : verification desactivee
@@ -43,7 +43,7 @@ pub fn https(ip: &str, method: &str, path: &str, key: Option<&str>, body: Option
 }
 
 fn ok_status(head: &str) -> bool {
-    head.lines().next().map_or(false, |l| l.split_whitespace().nth(1) == Some("200"))
+    head.lines().next().is_some_and(|l| l.split_whitespace().nth(1) == Some("200"))
 }
 
 /// Appairage : renvoie (cle d'application, clientkey). Exige un appui sur le bouton du pont.

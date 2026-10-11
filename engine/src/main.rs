@@ -257,7 +257,7 @@ fn cmd_test() -> io::Result<()> {
     let key = m.get("key").cloned().unwrap_or_default();
     let area = m.get("area").cloned().unwrap_or_default();
     println!("identite DTLS : {}", hue::application_id(&ip, &key)?);
-    println!("clientkey     : {}", if m.get("clientkey").map_or(false, |v| !v.is_empty()) { "presente" } else { "ABSENTE (lancer 'hue-ambi pair')" });
+    println!("clientkey     : {}", if m.get("clientkey").is_some_and(|v| !v.is_empty()) { "presente" } else { "ABSENTE (lancer 'hue-ambi pair')" });
     let chans = hue::channels(&ip, &key, &area)?;
     let zones = zones_for(&chans);
     let tuning = color::Tuning { gain: 1.0, saturation: 1.25, gamma: 2.2 };
