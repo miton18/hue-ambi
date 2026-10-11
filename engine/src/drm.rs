@@ -10,11 +10,17 @@
 //! card0 est le GPU de rendu v3d et card1 le controleur d'affichage vc4) : on ouvre tous les
 //! /dev/dri/cardN qui exposent des plans et on cherche la video sur chacun.
 
+#[cfg(target_arch = "aarch64")]
+use std::arch::asm;
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io;
+use std::mem;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::os::unix::fs::OpenOptionsExt;
+use std::ptr;
+
+use crate::color;
 
 const DRI: &str = "/dev/dri";
 const DEBUG_DRI: &str = "/sys/kernel/debug/dri";
@@ -42,7 +48,7 @@ struct FbCmd2 {
     offsets: [u32; 4],
     modifier: [u64; 4],
 }
-const _: () = assert!(std::mem::size_of::<FbCmd2>() == 104);
+const _: () = assert!(mem::size_of::<FbCmd2>() == 104);
 
 #[repr(C)]
 struct PrimeHandle {
@@ -68,7 +74,7 @@ struct GetPlane {
     count_format_types: u32,
     format_type_ptr: u64,
 }
-const _: () = assert!(std::mem::size_of::<GetPlane>() == 32);
+const _: () = assert!(mem::size_of::<GetPlane>() == 32);
 
 #[repr(C)]
 #[derive(Default)]
@@ -103,14 +109,14 @@ struct Version {
     desc: usize,
 }
 
-const VERSION: u64 = ioc(RW, b'd', 0x00, std::mem::size_of::<Version>());
-const GETFB2: u64 = ioc(RW, b'd', 0xCE, std::mem::size_of::<FbCmd2>());
-const PRIME_H2FD: u64 = ioc(RW, b'd', 0x2D, std::mem::size_of::<PrimeHandle>());
-const GEM_CLOSE: u64 = ioc(W, b'd', 0x09, std::mem::size_of::<GemClose>());
-const GETPLANERES: u64 = ioc(RW, b'd', 0xB5, std::mem::size_of::<GetPlaneRes>());
-const GETPLANE: u64 = ioc(RW, b'd', 0xB6, std::mem::size_of::<GetPlane>());
-const SET_CLIENT_CAP: u64 = ioc(W, b'd', 0x0D, std::mem::size_of::<ClientCap>());
-const DMA_SYNC: u64 = ioc(W, b'b', 0x00, std::mem::size_of::<DmaBufSync>());
+const VERSION: u64 = ioc(RW, b'd', 0x00, mem::size_of::<Version>());
+const GETFB2: u64 = ioc(RW, b'd', 0xCE, mem::size_of::<FbCmd2>());
+const PRIME_H2FD: u64 = ioc(RW, b'd', 0x2D, mem::size_of::<PrimeHandle>());
+const GEM_CLOSE: u64 = ioc(W, b'd', 0x09, mem::size_of::<GemClose>());
+const GETPLANERES: u64 = ioc(RW, b'd', 0xB5, mem::size_of::<GetPlaneRes>());
+const GETPLANE: u64 = ioc(RW, b'd', 0xB6, mem::size_of::<GetPlane>());
+const SET_CLIENT_CAP: u64 = ioc(W, b'd', 0x0D, mem::size_of::<ClientCap>());
+const DMA_SYNC: u64 = ioc(W, b'b', 0x00, mem::size_of::<DmaBufSync>());
 const UNIVERSAL_PLANES: u64 = 2;
 const SYNC_START_READ: u64 = 1;
 const SYNC_END_READ: u64 = 5;
@@ -160,7 +166,7 @@ impl Sync {
 fn dc_civac(p: *const u8) {
     #[cfg(target_arch = "aarch64")]
     unsafe {
-        std::arch::asm!("dc civac, {0}", in(reg) p, options(nostack, preserves_flags));
+        asm!("dc civac, {0}", in(reg) p, options(nostack, preserves_flags));
     }
     #[cfg(not(target_arch = "aarch64"))]
     let _ = p;
@@ -171,7 +177,7 @@ fn dc_civac(p: *const u8) {
 fn dsb() {
     #[cfg(target_arch = "aarch64")]
     unsafe {
-        std::arch::asm!("dsb ish", options(nostack, preserves_flags));
+        asm!("dsb ish", options(nostack, preserves_flags));
     }
 }
 
@@ -229,7 +235,7 @@ fn ensure_debugfs() {
     let src = b"debugfs\0";
     let tgt = b"/sys/kernel/debug\0";
     unsafe {
-        libc::mount(src.as_ptr() as *const _, tgt.as_ptr() as *const _, src.as_ptr() as *const _, 0, std::ptr::null());
+        libc::mount(src.as_ptr() as *const _, tgt.as_ptr() as *const _, src.as_ptr() as *const _, 0, ptr::null());
     }
 }
 
@@ -258,7 +264,7 @@ fn export(card: RawFd, fb: u32, want_fd: bool) -> io::Result<(FbCmd2, Option<Own
 }
 
 fn inode(fd: &OwnedFd) -> io::Result<u64> {
-    let mut st: libc::stat = unsafe { std::mem::zeroed() };
+    let mut st: libc::stat = unsafe { mem::zeroed() };
     if unsafe { libc::fstat(fd.as_raw_fd(), &mut st) } < 0 {
         return Err(io::Error::last_os_error());
     }
@@ -300,7 +306,7 @@ impl Frame {
         }
         let len = len as usize;
         let ptr = unsafe {
-            libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ, libc::MAP_SHARED, fd.as_raw_fd(), 0)
+            libc::mmap(ptr::null_mut(), len, libc::PROT_READ, libc::MAP_SHARED, fd.as_raw_fd(), 0)
         };
         if ptr == libc::MAP_FAILED {
             return Err(io::Error::last_os_error());
@@ -335,11 +341,11 @@ impl Frame {
         }
         let p = unsafe { self.ptr.add(a) };
         if n == 4 && a % 4 == 0 {
-            return Some(u32::from_le(unsafe { std::ptr::read_volatile(p as *const u32) }));
+            return Some(u32::from_le(unsafe { ptr::read_volatile(p as *const u32) }));
         }
         let mut v = 0u32;
         for i in 0..n {
-            v |= (unsafe { std::ptr::read_volatile(p.add(i)) } as u32) << (8 * i);
+            v |= (unsafe { ptr::read_volatile(p.add(i)) } as u32) << (8 * i);
         }
         Some(v)
     }
@@ -605,7 +611,7 @@ impl Capture {
                 for i in 0..GX {
                     let (x, y) = pos(z, i, j);
                     if let Some((yy, cb, cr, bits)) = frame.yuv_with(x, y, |a, n| frame.load(a, n)) {
-                        let c = crate::color::to_linear(yy, cb, cr, bits, hdr);
+                        let c = color::to_linear(yy, cb, cr, bits, hdr);
                         acc[0] += c[0];
                         acc[1] += c[1];
                         acc[2] += c[2];

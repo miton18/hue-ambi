@@ -2,11 +2,13 @@
 
 use openssl::ssl::{Ssl, SslConnector, SslContext, SslMethod, SslStream, SslVerifyMode};
 use serde_json::{json, Value};
+use std::fmt::Display;
 use std::io::{self, Read, Write};
 use std::net::{TcpStream, UdpSocket};
+use std::thread;
 use std::time::Duration;
 
-fn err<E: std::fmt::Display>(e: E) -> io::Error {
+fn err<E: Display>(e: E) -> io::Error {
     io::Error::new(io::ErrorKind::Other, e.to_string())
 }
 
@@ -55,7 +57,7 @@ pub fn pair(ip: &str) -> io::Result<(String, String)> {
             let c = s["clientkey"].as_str().ok_or_else(|| err("reponse sans clientkey"))?;
             return Ok((u.to_string(), c.to_string()));
         }
-        std::thread::sleep(Duration::from_secs(2));
+        thread::sleep(Duration::from_secs(2));
     }
     Err(err("bouton du pont non presse dans les 60 secondes"))
 }

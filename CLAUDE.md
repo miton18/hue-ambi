@@ -11,6 +11,7 @@ Philips Hue ambilight for Kodi on the Raspberry Pi 5: a Rust engine reads the DR
 
 ## Conventions
 
+- Rust imports: everything goes through `use` at the top of the file, never inline paths such as `std::fs::read_to_string(...)` or a `use` inside a function. Functions through their parent module (`use std::fs;` then `fs::read_to_string`), types and traits imported directly (`use std::fs::OpenOptions;`, `use std::io::Write;`). FFI calls keep the crate prefix (`libc::ioctl`).
 - Code comments, log messages and engine CLI output are in French; user-facing Kodi strings go through `resources/language/*/strings.po` (en_gb is the source, fr_fr the translation, ids 30000–30999). Never hard-code UI text in the Python.
 - Settings use the Kodi settings format version 1 (`<settings version="1">`) with numeric labels. Setting ids are stored in users' profiles: don't rename them.
 - Keep the hot path (`Capture::grab`, `encode`, `Stream::send`) allocation-free and free of syscalls beyond the per-frame DRM ioctls.

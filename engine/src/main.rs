@@ -8,15 +8,20 @@ mod drm;
 mod hue;
 
 use std::collections::HashMap;
-use std::io;
+use std::env;
+use std::fs::{self, OpenOptions};
+use std::io::{self, Write};
+use std::os::unix::fs::OpenOptionsExt;
+use std::process;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread;
 use std::time::{Duration, Instant};
 
 const CONF: &str = "/storage/.config/hue-ambi.conf";
 
 /// Fichier de configuration : HUE_AMBI_CONF (fourni par l'add-on Kodi) ou chemin par defaut.
 fn conf_path() -> String {
-    std::env::var("HUE_AMBI_CONF").unwrap_or_else(|_| CONF.to_string())
+    env::var("HUE_AMBI_CONF").unwrap_or_else(|_| CONF.to_string())
 }
 
 static STOP: AtomicBool = AtomicBool::new(false);
@@ -26,7 +31,7 @@ extern "C" fn on_signal(_: libc::c_int) {
 }
 
 fn load_conf(path: &str) -> io::Result<HashMap<String, String>> {
-    let txt = std::fs::read_to_string(path)?;
+    let txt = fs::read_to_string(path)?;
     Ok(txt
         .lines()
         .filter_map(|l| {
@@ -102,7 +107,7 @@ fn sleep_s(s: u64) {
         if STOP.load(Ordering::SeqCst) {
             return;
         }
-        std::thread::sleep(Duration::from_millis(250));
+        thread::sleep(Duration::from_millis(250));
     }
 }
 
@@ -127,7 +132,7 @@ fn run() -> io::Result<()> {
     while !STOP.load(Ordering::SeqCst) {
         // --- attente d'une video a l'ecran ---
         if !cap.has_video() {
-            std::thread::sleep(Duration::from_millis(250));
+            thread::sleep(Duration::from_millis(250));
             continue;
         }
         eprintln!("hue-ambi : video detectee, ouverture du flux");
@@ -198,7 +203,7 @@ fn run() -> io::Result<()> {
             next += period;
             let now = Instant::now();
             if next > now {
-                std::thread::sleep(next - now);
+                thread::sleep(next - now);
             } else {
                 next = now;
             }
@@ -227,9 +232,8 @@ fn cmd_pair(ip: Option<&str>) -> io::Result<()> {
     for (k, v) in rest {
         txt.push_str(&format!("{k}={v}\n"));
     }
-    use std::os::unix::fs::OpenOptionsExt;
-    let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&path)?;
-    std::io::Write::write_all(&mut f, txt.as_bytes())?;
+    let mut f = OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&path)?;
+    f.write_all(txt.as_bytes())?;
     println!("Appairage reussi, identifiants ecrits dans {path}");
     if area.is_empty() {
         println!("Choisis une zone avec 'hue-ambi areas' puis renseigne area= dans {path}");
@@ -312,7 +316,7 @@ fn cmd_dtls(a: &[String]) -> io::Result<()> {
     println!("poignee de main DTLS : {:.1} ms", t.elapsed().as_secs_f64() * 1000.0);
     for _ in 0..10 {
         s.send(&[(0, [0xFFFF, 0, 0]), (1, [0, 0, 0xFFFF])])?;
-        std::thread::sleep(Duration::from_millis(100));
+        thread::sleep(Duration::from_millis(100));
     }
     println!("10 paquets envoyes");
     Ok(())
@@ -323,7 +327,7 @@ fn main() {
         libc::signal(libc::SIGTERM, on_signal as *const () as libc::sighandler_t);
         libc::signal(libc::SIGINT, on_signal as *const () as libc::sighandler_t);
     }
-    let args: Vec<String> = std::env::args().collect();
+    let args: Vec<String> = env::args().collect();
     let r = match args.get(1).map(String::as_str) {
         None | Some("run") => run(),
         Some("pair") => cmd_pair(args.get(2).map(String::as_str)),
@@ -332,11 +336,11 @@ fn main() {
         Some("dtls-test") => cmd_dtls(&args[2..]),
         Some(o) => {
             eprintln!("usage : hue-ambi [run | pair <ip_du_pont> | areas | test]   (commande inconnue : {o})");
-            std::process::exit(2);
+            process::exit(2);
         }
     };
     if let Err(e) = r {
         eprintln!("hue-ambi : erreur : {e}");
-        std::process::exit(1);
+        process::exit(1);
     }
 }
