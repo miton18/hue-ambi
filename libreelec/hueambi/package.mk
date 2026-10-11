@@ -18,7 +18,7 @@ PKG_LONGDESC="Hue Ambi (${PKG_VERSION}) reads the picture straight from the disp
 PKG_TOOLCHAIN="manual"
 
 PKG_IS_ADDON="yes"
-# addon.xml fourni dans source/ (menu contextuel) : garder la numerotation des add-ons LibreELEC
+# source/addon.xml is shipped (context menu item); keep the LibreELEC add-on numbering
 PKG_ADDON_VERSION="${ADDON_VERSION}.${PKG_REV}"
 PKG_ADDON_NAME="Hue Ambi"
 PKG_ADDON_TYPE="xbmc.service"
@@ -27,7 +27,7 @@ PKG_MAINTAINER="Rémi Collignon-Ducret (miton18)"
 
 make_target() {
   export RUSTC_LINKER=${CC}
-  # --no-default-features : lier l'OpenSSL de LibreELEC au lieu de le compiler dans le binaire
+  # --no-default-features: link LibreELEC's OpenSSL instead of the vendored one
   cargo build \
     --manifest-path ${PKG_BUILD}/engine/Cargo.toml \
     --target ${TARGET_NAME} \
@@ -43,7 +43,7 @@ addon() {
     cp ${PKG_BUILD}/.${TARGET_NAME}/target/${TARGET_NAME}/release/hue-ambi \
        ${ADDON_BUILD}/${PKG_ADDON_ID}/bin
 
-  # interface Kodi (Python, reglages, traductions) ; addon.xml est genere par LibreELEC
+  # Kodi side from the upstream release: service, settings, translations
   cp -PR ${PKG_BUILD}/service.hueambi/default.py \
          ${PKG_BUILD}/service.hueambi/resources \
          ${ADDON_BUILD}/${PKG_ADDON_ID}
