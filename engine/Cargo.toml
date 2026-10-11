@@ -15,9 +15,13 @@ default = ["vendored-openssl"]
 vendored-openssl = ["openssl/vendored"]
 
 [dependencies]
-libc = "0.2"
+dma-buf = "0.5"
+drm = "0.15"
+drm-ffi = "0.9"
 openssl = "0.10"
+rustix = { version = "1", features = ["mount", "process", "time"] }
 serde_json = "1"
+signal-hook = "0.3"
 
 [profile.release]
 opt-level = 3

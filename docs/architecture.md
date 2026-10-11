@@ -24,7 +24,9 @@ The engine reads it back through the same kernel API, as root:
 
 1. At start-up, every `/dev/dri/cardN` is opened and `DRM_IOCTL_MODE_GETPLANERESOURCES` lists its planes. Render-only GPUs (`v3d`) have none and are skipped. Card numbers depend on driver probe order, so nothing is hard-coded: on a Pi 5 this finds `card1 (vc4, 56 planes)`.
 2. `DRM_IOCTL_MODE_GETPLANE` on each plane gives its current `fb_id`, then `DRM_IOCTL_MODE_GETFB2` gives the pixel format. The plane whose framebuffer is YUV (`P030`, `NV12`, `YU12`, `P010`) is the video; the GUI is on an `AR24` plane.
-3. Per frame: `GETPLANE` → `GETFB2` (returns GEM handles because we are root) → `DRM_IOCTL_PRIME_HANDLE_TO_FD` → `mmap(PROT_READ)` of the dma-buf. GEM handles are closed right away; the dma-buf fd keeps the buffer alive.
+3. Per frame: `GETPLANE` → `GETFB2` (returns GEM handles because we are root) → `DRM_IOCTL_PRIME_HANDLE_TO_FD` → read-only mapping of the dma-buf. GEM handles are closed right away; the dma-buf fd keeps the buffer alive.
+
+The engine has no `unsafe` code. The DRM ioctls go through the [`drm`](https://crates.io/crates/drm) crate, except GETFB2, which comes from [`drm-ffi`](https://crates.io/crates/drm-ffi): `drm-fourcc` does not know `P030`, so `get_planar_framebuffer` would reject the Pi 5's 10-bit frames. The mapping and its cache synchronisation go through [`dma-buf`](https://crates.io/crates/dma-buf), and system calls through [`rustix`](https://crates.io/crates/rustix) and [`signal-hook`](https://crates.io/crates/signal-hook). Pixels are read through bounds-checked slices.
 
 ### Framebuffer ids are recycled every frame
 
@@ -54,15 +56,9 @@ Each light zone is sampled on a 12 × 8 grid: 96 pixels per light, i.e. 288 word
 
 ### Cache coherency
 
-The decoder writes the buffers by DMA. If the mapping is CPU-cacheable, the CPU may keep serving cache lines from an earlier frame in the same buffer, so the colours would freeze.
+The decoder writes the buffers by DMA. If the mapping is CPU-cacheable, the CPU may keep serving cache lines from an earlier frame in the same buffer, so the colours would freeze. Every capture therefore reads the buffer inside `MappedDmaBuf::read`, which brackets the access with `DMA_BUF_IOCTL_SYNC` (start, then end of CPU read), the portable method.
 
-- `sync=dc` (default): the engine cleans and invalidates only the cache lines it is about to read, with `dc civac`, which Linux allows from user space on arm64. It does it in two passes over the sample grid: first issue every `dc civac`, then a single `dsb ish`, then do all the reads. One function computes the addresses for both passes (`Frame::yuv_with`), so they always match.
-- `sync=dmabuf`: `DMA_BUF_IOCTL_SYNC` around the reads, the portable method. Depending on the exporter it may flush the whole 16 MB buffer.
-- `sync=none`: no maintenance, for comparison.
-
-`hue-ambi test` benchmarks the three modes on the frame currently on screen.
-
-**Measured** (Pi 5, 5 lights, `hue-ambi test` during playback): 0.05 ms of CPU per capture with `sync=none`, 0.07 ms with `dc`, 0.08 ms with `dmabuf`. Cache maintenance is not a cost worth optimising further; `dc` stays the default for correctness.
+Version 0.2.0 also had a hand-written `dc civac` mode that invalidated only the cache lines being read. On a Pi 5 with 5 lights during playback it cost 0.07 ms of CPU per capture, against 0.08 ms for `DMA_BUF_IOCTL_SYNC` and 0.05 ms with no maintenance at all. The gain did not justify inline assembly, so it was removed.
 
 ## Colour
 

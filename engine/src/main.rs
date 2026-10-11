@@ -14,20 +14,20 @@ use std::io::{self, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::process;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
+
+use rustix::process::setpriority_process;
+use rustix::time::{clock_gettime, ClockId};
+use signal_hook::consts::{SIGINT, SIGTERM};
+use signal_hook::flag;
 
 const CONF: &str = "/storage/.config/hue-ambi.conf";
 
 /// Fichier de configuration : HUE_AMBI_CONF (fourni par l'add-on Kodi) ou chemin par defaut.
 fn conf_path() -> String {
     env::var("HUE_AMBI_CONF").unwrap_or_else(|_| CONF.to_string())
-}
-
-static STOP: AtomicBool = AtomicBool::new(false);
-
-extern "C" fn on_signal(_: libc::c_int) {
-    STOP.store(true, Ordering::SeqCst);
 }
 
 fn load_conf(path: &str) -> io::Result<HashMap<String, String>> {
@@ -52,7 +52,6 @@ struct Conf {
     area: String,
     fps: f32,
     smoothing: f32,
-    sync: drm::Sync,
     tuning: color::Tuning,
 }
 
@@ -74,7 +73,6 @@ impl Conf {
             area: s("area")?,
             fps: f("fps", 50.0).clamp(1.0, 60.0),
             smoothing: f("smoothing", 0.35).clamp(0.01, 1.0),
-            sync: m.get("sync").and_then(|v| drm::Sync::parse(v)).unwrap_or(drm::Sync::Dc),
             tuning: color::Tuning { gain: f("gain", 1.0), saturation: f("saturation", 1.25), gamma: f("gamma", 2.2) },
         })
     }
@@ -95,41 +93,35 @@ fn zones_for(chans: &[hue::Channel]) -> Vec<drm::Zone> {
 
 /// Temps CPU consomme par ce thread, hors attentes (verrous, sommeil).
 fn cpu_time() -> Duration {
-    let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-    unsafe {
-        libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut ts);
-    }
+    let ts = clock_gettime(ClockId::ThreadCPUTime);
     Duration::new(ts.tv_sec as u64, ts.tv_nsec as u32)
 }
 
-fn sleep_s(s: u64) {
+fn sleep_s(stop: &AtomicBool, s: u64) {
     for _ in 0..s * 4 {
-        if STOP.load(Ordering::SeqCst) {
+        if stop.load(Ordering::SeqCst) {
             return;
         }
         thread::sleep(Duration::from_millis(250));
     }
 }
 
-fn run() -> io::Result<()> {
+fn run(stop: &AtomicBool) -> io::Result<()> {
     let c = Conf::load()?;
     // un cran devant les taches ordinaires, sans passer devant Kodi en temps reel
-    unsafe {
-        libc::setpriority(libc::PRIO_PROCESS as _, 0, -5);
-    }
+    let _ = setpriority_process(None, -5);
     let app_id = hue::application_id(&c.bridge, &c.key)?;
     let chans = hue::channels(&c.bridge, &c.key, &c.area)?;
     let zones = zones_for(&chans);
     eprintln!("hue-ambi : zone {} ({} canaux), {} img/s", c.area, chans.len(), c.fps);
     let mut cap = drm::Capture::new()?;
-    cap.sync = c.sync;
-    eprintln!("hue-ambi : affichage {}, synchro cache {:?}", cap.describe(), c.sync);
+    eprintln!("hue-ambi : affichage {}", cap.describe());
     let period = Duration::from_secs_f32(1.0 / c.fps);
     let mut lin = vec![[0f32; 3]; zones.len()];
     let mut smooth = vec![[0f32; 3]; zones.len()];
     let mut out: Vec<(u8, [u16; 3])> = chans.iter().map(|ch| (ch.id, [0u16; 3])).collect();
 
-    while !STOP.load(Ordering::SeqCst) {
+    while !stop.load(Ordering::SeqCst) {
         // --- attente d'une video a l'ecran ---
         if !cap.has_video() {
             thread::sleep(Duration::from_millis(250));
@@ -138,7 +130,7 @@ fn run() -> io::Result<()> {
         eprintln!("hue-ambi : video detectee, ouverture du flux");
         if let Err(e) = hue::set_streaming(&c.bridge, &c.key, &c.area, true) {
             eprintln!("hue-ambi : demarrage de la zone : {e}");
-            sleep_s(5);
+            sleep_s(stop, 5);
             continue;
         }
         let mut stream = match hue::Stream::connect(&c.bridge, &app_id, &c.clientkey, &c.area) {
@@ -146,7 +138,7 @@ fn run() -> io::Result<()> {
             Err(e) => {
                 eprintln!("hue-ambi : {e}");
                 let _ = hue::set_streaming(&c.bridge, &c.key, &c.area, false);
-                sleep_s(5);
+                sleep_s(stop, 5);
                 continue;
             }
         };
@@ -157,7 +149,7 @@ fn run() -> io::Result<()> {
         let mut next = Instant::now();
         let (mut frames, mut t_rep, mut cpu0) = (0u64, Instant::now(), cpu_time());
         let mut t_grab = Duration::ZERO;
-        while !STOP.load(Ordering::SeqCst) {
+        while !stop.load(Ordering::SeqCst) {
             let t0 = Instant::now();
             let got = cap.grab(&zones, &mut lin);
             t_grab += t0.elapsed();
@@ -279,22 +271,18 @@ fn cmd_test() -> io::Result<()> {
         println!("aucune video a l'ecran : capture non testee");
         return Ok(());
     }
-    for mode in [drm::Sync::None, drm::Sync::DmaBuf, drm::Sync::Dc] {
-        cap.sync = mode;
-        let n = 100;
-        let (t, c) = (Instant::now(), cpu_time());
-        for _ in 0..n {
-            cap.grab(&zones, &mut lin);
-        }
-        let (dt, dc) = (t.elapsed() / n, (cpu_time() - c) / n);
-        println!(
-            "format {}  sync={:<6}  {:.3} ms de CPU par image, {:.2} ms ecoulees (attente de l'affichage comprise)",
-            String::from_utf8_lossy(&cap.last_format),
-            format!("{mode:?}"),
-            dc.as_secs_f64() * 1000.0,
-            dt.as_secs_f64() * 1000.0
-        );
+    let n = 100;
+    let (t, c) = (Instant::now(), cpu_time());
+    for _ in 0..n {
+        cap.grab(&zones, &mut lin);
     }
+    let (dt, dc) = (t.elapsed() / n, (cpu_time() - c) / n);
+    println!(
+        "format {}  {:.3} ms de CPU par image, {:.2} ms ecoulees (attente de l'affichage comprise)",
+        String::from_utf8_lossy(&cap.last_format),
+        dc.as_secs_f64() * 1000.0,
+        dt.as_secs_f64() * 1000.0
+    );
     for (ch, (l, z)) in chans.iter().zip(lin.iter().zip(&zones)) {
         let e = color::encode(*l, &tuning);
         println!(
@@ -323,13 +311,16 @@ fn cmd_dtls(a: &[String]) -> io::Result<()> {
 }
 
 fn main() {
-    unsafe {
-        libc::signal(libc::SIGTERM, on_signal as *const () as libc::sighandler_t);
-        libc::signal(libc::SIGINT, on_signal as *const () as libc::sighandler_t);
+    // SIGTERM (arret de l'add-on) et SIGINT levent le drapeau : la boucle rend la zone au pont
+    let stop = Arc::new(AtomicBool::new(false));
+    for sig in [SIGTERM, SIGINT] {
+        if let Err(e) = flag::register(sig, Arc::clone(&stop)) {
+            eprintln!("hue-ambi : signal {sig} : {e}");
+        }
     }
     let args: Vec<String> = env::args().collect();
     let r = match args.get(1).map(String::as_str) {
-        None | Some("run") => run(),
+        None | Some("run") => run(&stop),
         Some("pair") => cmd_pair(args.get(2).map(String::as_str)),
         Some("areas") => cmd_areas(),
         Some("test") => cmd_test(),
