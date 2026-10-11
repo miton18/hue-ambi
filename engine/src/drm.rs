@@ -357,7 +357,7 @@ impl Capture {
         let Ok(ino) = file.metadata().map(|m| m.ino()) else { return false };
         self.tick += 1;
         let tick = self.tick;
-        if self.cache.get(&ino).map_or(true, |f| f.layout != l) {
+        if self.cache.get(&ino).is_none_or(|f| f.layout != l) {
             match Frame::map(OwnedFd::from(file), l) {
                 Ok(f) => {
                     self.cache.insert(ino, f);
