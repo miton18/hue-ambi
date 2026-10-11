@@ -88,6 +88,15 @@ fn zones_for(chans: &[hue::Channel]) -> Vec<drm::Zone> {
         .collect()
 }
 
+/// Temps CPU consomme par ce thread, hors attentes (verrous, sommeil).
+fn cpu_time() -> Duration {
+    let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    unsafe {
+        libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut ts);
+    }
+    Duration::new(ts.tv_sec as u64, ts.tv_nsec as u32)
+}
+
 fn sleep_s(s: u64) {
     for _ in 0..s * 4 {
         if STOP.load(Ordering::SeqCst) {
@@ -141,13 +150,12 @@ fn run() -> io::Result<()> {
         let mut first = true;
         let mut misses = 0u32;
         let mut next = Instant::now();
-        let (mut frames, mut t_rep) = (0u64, Instant::now());
-        let (mut t_grab, mut t_send) = (Duration::ZERO, Duration::ZERO);
+        let (mut frames, mut t_rep, mut cpu0) = (0u64, Instant::now(), cpu_time());
+        let mut t_grab = Duration::ZERO;
         while !STOP.load(Ordering::SeqCst) {
             let t0 = Instant::now();
             let got = cap.grab(&zones, &mut lin);
-            let t1 = Instant::now();
-            t_grab += t1 - t0;
+            t_grab += t0.elapsed();
             if got {
                 misses = 0;
                 let a = if first { 1.0 } else { c.smoothing };
@@ -170,20 +178,22 @@ fn run() -> io::Result<()> {
                 eprintln!("hue-ambi : envoi : {e}");
                 break;
             }
-            t_send += t1.elapsed();
             frames += 1;
             if t_rep.elapsed() >= Duration::from_secs(60) {
                 let el = t_rep.elapsed().as_secs_f32();
+                let cpu = cpu_time();
                 let ms = |d: Duration| d.as_secs_f32() * 1000.0 / frames.max(1) as f32;
+                // la capture attend surtout le verrou du plan, tenu par Kodi jusqu'a l'affichage
+                // de l'image suivante : temps ecoule, pas du calcul
                 eprintln!(
-                    "hue-ambi : {:.1} img/s, par image {:.2} ms de capture + {:.2} ms de calcul et envoi",
+                    "hue-ambi : {:.1} img/s, par image {:.3} ms de CPU, {:.2} ms d'attente de l'affichage et capture",
                     frames as f32 / el,
-                    ms(t_grab),
-                    ms(t_send)
+                    ms(cpu - cpu0),
+                    ms(t_grab)
                 );
                 frames = 0;
-                (t_grab, t_send) = (Duration::ZERO, Duration::ZERO);
-                t_rep = Instant::now();
+                t_grab = Duration::ZERO;
+                (t_rep, cpu0) = (Instant::now(), cpu);
             }
             next += period;
             let now = Instant::now();
@@ -268,12 +278,18 @@ fn cmd_test() -> io::Result<()> {
     for mode in [drm::Sync::None, drm::Sync::DmaBuf, drm::Sync::Dc] {
         cap.sync = mode;
         let n = 100;
-        let t = Instant::now();
+        let (t, c) = (Instant::now(), cpu_time());
         for _ in 0..n {
             cap.grab(&zones, &mut lin);
         }
-        let dt = t.elapsed() / n;
-        println!("format {}  sync={:<6?} capture : {:.3} ms par image", String::from_utf8_lossy(&cap.last_format), mode, dt.as_secs_f64() * 1000.0);
+        let (dt, dc) = (t.elapsed() / n, (cpu_time() - c) / n);
+        println!(
+            "format {}  sync={:<6}  {:.3} ms de CPU par image, {:.2} ms ecoulees (attente de l'affichage comprise)",
+            String::from_utf8_lossy(&cap.last_format),
+            format!("{mode:?}"),
+            dc.as_secs_f64() * 1000.0,
+            dt.as_secs_f64() * 1000.0
+        );
     }
     for (ch, (l, z)) in chans.iter().zip(lin.iter().zip(&zones)) {
         let e = color::encode(*l, &tuning);

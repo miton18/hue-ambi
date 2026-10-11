@@ -62,7 +62,7 @@ The decoder writes the buffers by DMA. If the mapping is CPU-cacheable, the CPU 
 
 `hue-ambi test` benchmarks the three modes on the frame currently on screen.
 
-**Measured so far**: version 0.1.0 (Pi 5, 5 lights) spent 7–11 ms per update. It issued a `dsb ish` after each of the ~1,400 `dc civac` of a frame, serialising them; 0.2.0 batches them as described above. The engine now logs capture time and calculation-plus-send time separately every 60 s, and `hue-ambi test` compares the three modes on a playing video; the new figures are still to be measured.
+**Measured** (Pi 5, 5 lights, `hue-ambi test` during playback): 0.05 ms of CPU per capture with `sync=none`, 0.07 ms with `dc`, 0.08 ms with `dmabuf`. Cache maintenance is not a cost worth optimising further; `dc` stays the default for correctness.
 
 ## Colour
 
@@ -115,4 +115,8 @@ each 1/fps:  grab → smooth → encode → send
 no frame for fps/2 consecutive ticks (0.5 s): stop streaming, release buffers, back to idle
 ```
 
-The engine raises its priority to nice −5. It uses `SCHED_OTHER`, not real time, so it never competes with Kodi's video pipeline. Every 60 s it logs to the Kodi log the achieved frame rate, the capture time per frame, and the calculation-plus-send time per frame.
+**A capture waits for the display.** `DRM_IOCTL_MODE_GETPLANE` takes the plane's modeset lock, and Kodi holds it while an atomic commit puts the next frame on screen. A capture therefore often sleeps until that frame is displayed, then reads it: 3–10 ms of elapsed time per capture, but almost no CPU. Version 0.1.0 logged that elapsed time as "compute time" (7–11 ms), which looked like a performance problem and was not one. This wait behaves like vsync: the frame is read right after it reaches the screen, so it adds no latency relative to the picture. The lock is only held for microseconds on our side, so Kodi's next commit is not delayed in any noticeable way.
+
+Measured on a Pi 5 with 5 lights at 50 updates/s: 0.6 % of one core in total, 0.05–0.08 ms of CPU per capture, 0.03 ms for smoothing, encoding and the DTLS send.
+
+The engine raises its priority to nice −5. It uses `SCHED_OTHER`, not real time, so it never competes with Kodi's video pipeline. Every 60 s it logs to the Kodi log the achieved frame rate, the CPU time per frame (thread CPU clock), and the elapsed time spent in capture, display wait included.

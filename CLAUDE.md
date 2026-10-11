@@ -25,4 +25,5 @@ Philips Hue ambilight for Kodi on the Raspberry Pi 5: a Rust engine reads the DR
 - `cargo test` covers colour maths, HueStream framing and parsing; it runs inside `build.sh`.
 - `hue-ambi dtls-test <ip> <identity> <psk_hex> <area_id>` exercises the DTLS stream against any PSK server, e.g. `sleep 60 | openssl s_server -dtls1_2 -accept 2100 -nocert -psk <hex> -cipher PSK-AES128-GCM-SHA256` (s_server exits when its stdin closes).
 - `hue-ambi test` on the device prints the light → zone mapping and, while a video plays, benchmarks capture in the three cache-sync modes.
+- Measure cost in CPU time (`CLOCK_THREAD_CPUTIME_ID`), never in elapsed time: `GETPLANE` sleeps on the plane lock while Kodi commits a frame, so a capture takes 3–10 ms of wall time for ~0.05 ms of CPU.
 - Playing a video on a Kodi box with HDMI-CEC enabled may switch on the TV and amplifier: don't start playback remotely unless someone is in front of it.

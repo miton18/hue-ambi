@@ -31,9 +31,9 @@ Early, version 0.1.0, in use on one setup (Pi 5, LibreELEC 12.2 / Kodi 21.3, Hue
 | Rust engine colour maths, HueStream packets | unit tests (`cargo test`) |
 | Kodi add-on install, pairing, area choice, supervision | on the setup above |
 
-**Known issue:** version 0.1.0 spent 7–11 ms of CPU per update (5 lights), far above the intended sub-millisecond budget. Version 0.2.0 batches the cache maintenance, which is the likely culprit, and logs capture and send times separately. The new figures are not measured yet; see [cache coherency](docs/architecture.md#cache-coherency). Feedback and measurements from other setups are welcome.
+**Cost:** 0.05–0.08 ms of CPU per update for 5 lights, about 0.6 % of one core at 50 updates/s. Each capture also waits a few milliseconds for Kodi to finish putting the next frame on screen, so the engine reads every frame right after it is displayed; see [timing](docs/architecture.md#main-loop-and-timing).
 
-**LibreELEC add-on repository:** a package recipe is ready in [`libreelec/`](libreelec/), to be submitted once the CPU cost is under control.
+**LibreELEC add-on repository:** a package recipe is ready in [`libreelec/`](libreelec/).
 
 ## Requirements
 
@@ -102,7 +102,6 @@ Details, pitfalls and the maths are in [docs/architecture.md](docs/architecture.
 
 - BT.2020 content is assumed to be PQ (HDR10). HLG is not told apart yet, Dolby Vision is not supported by the Pi.
 - Only tested on one Pi 5 + LibreELEC 12.2 + Hue Bridge Pro setup.
-- Capture CPU cost is still high (see [Status](#status)).
 - Kodi's official repository does not accept add-ons that ship native binaries, so installation is from zip.
 
 ## License
