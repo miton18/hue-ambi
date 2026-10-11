@@ -40,6 +40,14 @@ msgctxt "#30006"
 msgid "Choose the entertainment area"
 msgstr ""
 
+msgctxt "#30007"
+msgid "Remote key to toggle ambilight during playback"
+msgstr ""
+
+msgctxt "#30008"
+msgid "none"
+msgstr ""
+
 msgctxt "#30010"
 msgid "Rendering"
 msgstr ""
@@ -118,5 +126,37 @@ msgstr ""
 
 msgctxt "#30114"
 msgid "other"
+msgstr ""
+
+msgctxt "#30115"
+msgid "red"
+msgstr ""
+
+msgctxt "#30116"
+msgid "green"
+msgstr ""
+
+msgctxt "#30117"
+msgid "yellow"
+msgstr ""
+
+msgctxt "#30118"
+msgid "blue"
+msgstr ""
+
+msgctxt "#30120"
+msgid "Play without ambilight"
+msgstr ""
+
+msgctxt "#30121"
+msgid "Ambilight off for this video"
+msgstr ""
+
+msgctxt "#30122"
+msgid "Ambilight back on"
+msgstr ""
+
+msgctxt "#30123"
+msgid "No video playing"
 msgstr ""
 

@@ -5,6 +5,7 @@ import re
 
 import xbmc
 import xbmcaddon
+import xbmcgui
 import xbmcvfs
 
 ID = 'service.hueambi'
@@ -12,6 +13,10 @@ PROFILE = xbmcvfs.translatePath('special://profile/addon_data/%s/' % ID)
 CONF = os.path.join(PROFILE, 'hue-ambi.conf')
 OLD_SETTINGS = xbmcvfs.translatePath('special://profile/addon_data/script.service.hue/settings.xml')
 REQUIRED = ('bridge', 'key', 'clientkey', 'area')
+KEYMAP = xbmcvfs.translatePath('special://profile/keymaps/hueambi.xml')
+KEYS = ('red', 'green', 'yellow', 'blue')
+# propriete de la fenetre Home posee par le menu contextuel "Lire sans ambilight"
+SKIP_NEXT = 'hueambi.skip_next'
 
 
 def log(msg, level=xbmc.LOGINFO):
@@ -25,6 +30,31 @@ def addon():
 def tr(sid):
     """Chaine traduite (resources/language/*/strings.po)."""
     return addon().getLocalizedString(sid)
+
+
+def notify(sid):
+    """Notification a l'ecran, avec l'icone de l'add-on."""
+    xbmcgui.Dialog().notification('Hue Ambi', tr(sid), addon().getAddonInfo('icon'), 3000, False)
+
+
+def write_keymap(key):
+    """Fichier de touches genere : la touche envoie NotifyAll au service, sans lancer de script.
+    Supprime si aucune touche n'est choisie."""
+    if key not in KEYS:
+        if os.path.exists(KEYMAP):
+            os.remove(KEYMAP)
+        return
+    action = 'NotifyAll(%s,toggle)' % ID
+    remote = '    <remote>\n      <%s>%s</%s>\n    </remote>\n' % (key, action, key)
+    xml = ('<?xml version="1.0" encoding="UTF-8"?>\n'
+           "<!-- genere par service.hueambi : modifier via les reglages de l'add-on -->\n"
+           '<keymap>\n'
+           '  <FullscreenVideo>\n' + remote + '  </FullscreenVideo>\n'
+           '  <VideoOSD>\n' + remote + '  </VideoOSD>\n'
+           '</keymap>\n')
+    os.makedirs(os.path.dirname(KEYMAP), exist_ok=True)
+    with open(KEYMAP, 'w', encoding='utf-8') as f:
+        f.write(xml)
 
 
 def binary():

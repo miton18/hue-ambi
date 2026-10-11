@@ -40,6 +40,14 @@ msgctxt "#30006"
 msgid "Choose the entertainment area"
 msgstr "Choisir la zone de divertissement"
 
+msgctxt "#30007"
+msgid "Remote key to toggle ambilight during playback"
+msgstr "Touche de la télécommande pour couper l'ambilight pendant la lecture"
+
+msgctxt "#30008"
+msgid "none"
+msgstr "aucune"
+
 msgctxt "#30010"
 msgid "Rendering"
 msgstr "Rendu"
@@ -119,4 +127,36 @@ msgstr "espace 3D"
 msgctxt "#30114"
 msgid "other"
 msgstr "autre"
+
+msgctxt "#30115"
+msgid "red"
+msgstr "rouge"
+
+msgctxt "#30116"
+msgid "green"
+msgstr "verte"
+
+msgctxt "#30117"
+msgid "yellow"
+msgstr "jaune"
+
+msgctxt "#30118"
+msgid "blue"
+msgstr "bleue"
+
+msgctxt "#30120"
+msgid "Play without ambilight"
+msgstr "Lire sans ambilight"
+
+msgctxt "#30121"
+msgid "Ambilight off for this video"
+msgstr "Ambilight coupé pour cette vidéo"
+
+msgctxt "#30122"
+msgid "Ambilight back on"
+msgstr "Ambilight réactivé"
+
+msgctxt "#30123"
+msgid "No video playing"
+msgstr "Aucune vidéo en cours"
 
