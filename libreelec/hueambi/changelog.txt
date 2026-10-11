@@ -1,2 +1,1 @@
-0
-- Initial release of Hue Ambi 0.3.0
+initial release
