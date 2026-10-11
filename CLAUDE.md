@@ -11,20 +11,23 @@ Philips Hue ambilight for Kodi on the Raspberry Pi 5: a Rust engine reads the DR
 
 ## Conventions
 
-- Rust imports: everything goes through `use` at the top of the file, never inline paths such as `std::fs::read_to_string(...)` or a `use` inside a function. Functions through their parent module (`use std::fs;` then `fs::read_to_string`), types and traits imported directly (`use std::fs::OpenOptions;`, `use std::io::Write;`). FFI calls keep the crate prefix (`libc::ioctl`).
+- Rust imports: everything goes through `use` at the top of the file, never inline paths such as `std::fs::read_to_string(...)` or a `use` inside a function. Functions through their parent module (`use std::fs;` then `fs::read_to_string`), types and traits imported directly (`use std::fs::OpenOptions;`, `use std::io::Write;`).
+- No `unsafe` in the engine. DRM goes through `drm` (and `drm-ffi` for GETFB2, because `drm-fourcc` does not know `P030`), buffer mapping and cache sync through `dma-buf`, system calls through `rustix` and `signal-hook`. If something seems to need `unsafe`, look for a crate first and discuss it before writing any.
 - Code comments, log messages and engine CLI output are in French; user-facing Kodi strings go through `resources/language/*/strings.po` (en_gb is the source, fr_fr the translation, ids 30000–30999). Never hard-code UI text in the Python.
 - Settings use the Kodi settings format version 1 (`<settings version="1">`) with numeric labels. Setting ids are stored in users' profiles: don't rename them.
 - Keep the hot path (`Capture::grab`, `encode`, `Stream::send`) allocation-free and free of syscalls beyond the per-frame DRM ioctls.
 - Never hard-code `/dev/dri/cardN`: card numbers follow driver probe order. `kms_cards()` opens every card that exposes planes.
-- Address computation for a pixel lives only in `Frame::yuv_with`; the cache-invalidation pass and the read pass both go through it.
+- Pixel addressing for every format lives in `Frame::yuv`; reads go through bounds-checked slices of the mapped buffer.
 - Never cache mapped buffers by framebuffer id: Kodi recycles fb ids every frame. Key by dma-buf inode.
 - Never read debugfs in the per-frame path (it takes all modeset locks).
 - Never commit bridge keys, clientkeys, entertainment area ids or LAN addresses. Put machine-specific notes in `CLAUDE.local.md` (gitignored).
 
 ## Testing
 
-- `cargo test` covers colour maths, HueStream framing and parsing; it runs inside `build.sh`.
+- Rust edition 2024, `rust-version` 1.85 (LibreELEC 12.2 ships Rust 1.89): don't raise it past what LibreELEC builds.
+- `cargo clippy --all-targets -- -D warnings` must stay clean, with and without `--no-default-features`; `build.sh` and the GitHub Actions CI (arm64 runner) run it with the tests.
+- `cargo test` covers colour maths, HueStream framing and parsing.
 - `hue-ambi dtls-test <ip> <identity> <psk_hex> <area_id>` exercises the DTLS stream against any PSK server, e.g. `sleep 60 | openssl s_server -dtls1_2 -accept 2100 -nocert -psk <hex> -cipher PSK-AES128-GCM-SHA256` (s_server exits when its stdin closes).
-- `hue-ambi test` on the device prints the light → zone mapping and, while a video plays, benchmarks capture in the three cache-sync modes.
+- `hue-ambi test` on the device prints the light → zone mapping and, while a video plays, benchmarks a capture (CPU and elapsed time).
 - Measure cost in CPU time (`CLOCK_THREAD_CPUTIME_ID`), never in elapsed time: `GETPLANE` sleeps on the plane lock while Kodi commits a frame, so a capture takes 3–10 ms of wall time for ~0.05 ms of CPU.
 - Playing a video on a Kodi box with HDMI-CEC enabled may switch on the TV and amplifier: don't start playback remotely unless someone is in front of it.

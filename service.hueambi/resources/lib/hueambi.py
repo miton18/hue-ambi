@@ -47,7 +47,6 @@ def values(a):
     v['smoothing'] = a.getSetting('smoothing') or '0.35'
     v['saturation'] = a.getSetting('saturation') or '1.25'
     v['gain'] = a.getSetting('gain') or '1.0'
-    v['sync'] = 'dc'
     return v
 
 

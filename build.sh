@@ -16,6 +16,8 @@ docker run --rm --platform "${PLATFORM:-linux/arm64}" \
   -e VERSION="$VERSION" -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
   -w /repo/engine rust:1-alpine sh -euc '
     apk add --no-cache musl-dev perl make gcc linux-headers zip >/dev/null
+    rustup component add clippy >/dev/null 2>&1
+    cargo clippy --release --locked --all-targets -- -D warnings
     cargo test --release
     cargo build --release
     install -Dm755 target/release/hue-ambi ../service.hueambi/bin/hue-ambi

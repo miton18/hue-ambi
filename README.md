@@ -17,6 +17,7 @@ Hue Ambi takes the video where it actually is: it maps the framebuffer of the vi
 - **HDR10 aware**: BT.2020 PQ is decoded to linear light, converted to BT.709 and soft-clipped around the HDR reference white (203 nits), so HDR films don't wash the room out.
 - **Reads the Pi 5 native formats**: Broadcom SAND128 tiled `P030` (10-bit HEVC/HDR) and `NV12`, plus linear `NV12`, `YU12`, `P010`.
 - **No Python in the hot path**: the Kodi add-on only configures and supervises a static Rust binary (≈5 MB, no runtime dependency).
+- **No `unsafe` code**: DRM, dma-buf and system calls go through the `drm`, `dma-buf`, `rustix` and `signal-hook` crates.
 - Starts streaming when a video appears on screen, stops half a second after it ends, and gives the lights back to the bridge.
 - Migrates the bridge address from `script.service.hue` if it is installed.
 
@@ -82,7 +83,7 @@ hue-ambi test               show the light → picture mapping and benchmark a c
 hue-ambi run                stream while a video is on screen (what the add-on runs)
 ```
 
-Configuration keys: `bridge`, `key`, `clientkey`, `area`, `fps`, `smoothing`, `saturation`, `gain`, `gamma`, `sync` (`dc`, `dmabuf` or `none`, see [architecture](docs/architecture.md#cache-coherency)).
+Configuration keys: `bridge`, `key`, `clientkey`, `area`, `fps`, `smoothing`, `saturation`, `gain`, `gamma`.
 
 ## How it works
 

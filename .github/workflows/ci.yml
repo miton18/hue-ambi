@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  engine:
+    name: clippy + tests (${{ matrix.openssl }})
+    runs-on: ubuntu-24.04-arm
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # zip GitHub : OpenSSL compile dans le binaire
+          - openssl: vendored
+            flags: ""
+          # LibreELEC : OpenSSL du systeme
+          - openssl: system
+            flags: --no-default-features
+    defaults:
+      run:
+        working-directory: engine
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: engine
+          key: ${{ matrix.openssl }}
+      - name: Install OpenSSL headers
+        if: matrix.openssl == 'system'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libssl-dev pkg-config
+      - name: Clippy
+        run: cargo clippy --locked --all-targets ${{ matrix.flags }} -- -D warnings
+      - name: Tests
+        run: cargo test --locked ${{ matrix.flags }}
