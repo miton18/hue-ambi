@@ -59,6 +59,14 @@ Early, version 0.1.0, in use on one setup (Pi 5, LibreELEC 12.2 / Kodi 21.3, Hue
 | Responsiveness | 0.35 | Exponential smoothing factor: 1 = raw frame colour, lower = calmer. |
 | Saturation | 1.25 | Boosts colour around the luminance, ambilight usually looks better slightly saturated. |
 | Brightness | 1.0 | Overall gain before the soft-knee highlight compression. |
+| Remote key | blue | Colour key that turns ambilight off or back on for the current video (see below); *none* disables it. |
+
+### During playback
+
+- **Remote key** (blue by default, any colour key forwarded by HDMI-CEC or a remote): turns ambilight off for the video being played, then back on with a second press. A notification shows the new state, and ambilight comes back by itself with the next video. The add-on writes `userdata/keymaps/hueambi.xml` for this; the key sends `NotifyAll(service.hueambi,toggle)` to the service, so no script is started.
+- **Context menu → Play without ambilight** on a movie, an episode or a video file: plays it with ambilight off.
+
+Kodi does not let add-ons put buttons into the skin's playback OSD, which is why these two entry points are used.
 
 ## Build
 

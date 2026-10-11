@@ -3,7 +3,7 @@
 # Copyright (C) 2026-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="hueambi"
-PKG_VERSION="0.2.0"
+PKG_VERSION="0.3.0"
 PKG_SHA256="@SHA256@"
 PKG_REV="0"
 PKG_ARCH="any"
@@ -18,6 +18,8 @@ PKG_LONGDESC="Hue Ambi (${PKG_VERSION}) reads the picture straight from the disp
 PKG_TOOLCHAIN="manual"
 
 PKG_IS_ADDON="yes"
+# addon.xml fourni dans source/ (menu contextuel) : garder la numerotation des add-ons LibreELEC
+PKG_ADDON_VERSION="${ADDON_VERSION}.${PKG_REV}"
 PKG_ADDON_NAME="Hue Ambi"
 PKG_ADDON_TYPE="xbmc.service"
 PKG_ADDON_PROJECTS="RPi5"

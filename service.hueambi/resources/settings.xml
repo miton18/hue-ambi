@@ -144,6 +144,24 @@
           </control>
         </setting>
       </group>
+      <group id="2">
+        <setting id="toggle_key" type="string" label="30007" help="">
+          <level>0</level>
+          <default>blue</default>
+          <constraints>
+            <options>
+              <option label="30008">none</option>
+              <option label="30115">red</option>
+              <option label="30116">green</option>
+              <option label="30117">yellow</option>
+              <option label="30118">blue</option>
+            </options>
+          </constraints>
+          <control type="list" format="string">
+            <heading>30007</heading>
+          </control>
+        </setting>
+      </group>
     </category>
   </section>
 </settings>
